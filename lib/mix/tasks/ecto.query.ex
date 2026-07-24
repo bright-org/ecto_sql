@@ -6,9 +6,10 @@ defmodule Mix.Tasks.Ecto.Query do
   @shortdoc "Runs a query against the repository"
 
   @switches [
+    explain: :boolean,
     limit: :integer,
     repo: [:string, :keep],
-    sql: :boolean,
+    to_sql: :boolean,
     no_compile: :boolean,
     no_deps_check: :boolean
   ]
@@ -24,19 +25,21 @@ defmodule Mix.Tasks.Ecto.Query do
   If a local `.iex.exs` file exists, only aliases from the file are made
   available to the query.
 
-  The query runs inside a read-only transaction.
+  Unless `--to-sql` or `--explain` is given, the query runs inside a read-only transaction.
 
   ## Examples
 
       $ mix ecto.query "from p in Post, where: p.published"
       $ mix ecto.query -r Custom.Repo "from p in Post, limit: 10"
-      $ mix ecto.query --sql "from p in Post, where: p.published"
+      $ mix ecto.query --to-sql "from p in Post, where: p.published"
+      $ mix ecto.query --explain "from p in Post, where: p.published"
 
   ## Command line options
 
     * `-r`, `--repo` - the repo to query
     * `--limit` - limits the number of printed entries. Defaults to 100.
-    * `--sql` - prints the generated SQL and parameters instead of running the query
+    * `--to-sql` - prints the generated SQL and parameters instead of running the query
+    * `--explain` - prints the query plan instead of running the query
 
   """
 
@@ -67,9 +70,15 @@ defmodule Mix.Tasks.Ecto.Query do
       end
 
     limit = Keyword.get(opts, :limit, @default_limit)
+    explain? = Keyword.get(opts, :explain, false)
+    to_sql? = Keyword.get(opts, :to_sql, false)
 
     if limit < 0 do
       Mix.raise("ecto.query expects --limit to be greater than or equal to zero")
+    end
+
+    if explain? and to_sql? do
+      Mix.raise("ecto.query expects only one of --explain or --to-sql to be given")
     end
 
     Mix.Task.run("app.start", args)
@@ -78,15 +87,20 @@ defmodule Mix.Tasks.Ecto.Query do
     query = eval_query(query)
 
     result =
-      if opts[:sql] do
-        {:ok, format_sql(repo, query)}
-      else
-        read_only_transaction(repo, fn ->
-          query
-          |> repo.all()
-          |> Enum.take(limit)
-          |> inspect_entries()
-        end)
+      cond do
+        explain? ->
+          {:ok, repo.explain(:all, query)}
+
+        to_sql? ->
+          {:ok, format_sql(repo, query)}
+
+        true ->
+          read_only_transaction(repo, fn ->
+            query
+            |> repo.all()
+            |> Enum.take(limit)
+            |> inspect_entries()
+          end)
       end
 
     result

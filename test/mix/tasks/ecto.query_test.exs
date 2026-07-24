@@ -176,7 +176,7 @@ defmodule Mix.Tasks.Ecto.QueryTest do
     assert Inspect.Opts.default_inspect_fun() == previous_fun
   end
 
-  test "prints SQL and params with --sql" do
+  test "prints SQL and params with --to-sql" do
     Process.put(
       :test_repo_to_sql,
       {"SELECT p0.\"id\" FROM \"posts\" AS p0 WHERE (p0.\"id\" = $1)", [1]}
@@ -188,7 +188,7 @@ defmodule Mix.Tasks.Ecto.QueryTest do
       run([
         "-r",
         to_string(__MODULE__.PostgresRepo),
-        "--sql",
+        "--to-sql",
         "from(p in Post, where: p.id == ^1)"
       ])
 
@@ -200,6 +200,17 @@ defmodule Mix.Tasks.Ecto.QueryTest do
       assert output =~ ~s[SQL:\nSELECT p0."id" FROM "posts" AS p0 WHERE (p0."id" = $1)]
       assert output =~ "Params:\n[1]"
     end)
+  end
+
+  test "prints explain plan with --explain" do
+    Process.put(:test_repo_explain, "Seq Scan on posts p0")
+
+    run(["-r", to_string(__MODULE__.PostgresRepo), "--explain", inspect(Post)])
+
+    assert_received {:explain, :all, %Ecto.Query{}, []}
+    refute_received {:all, _query}
+    refute_received {:read_only_transaction, __MODULE__.PostgresRepo, _fun, _opts}
+    assert_received {:mix_shell, :info, ["Seq Scan on posts p0"]}
   end
 
   test "runs MySQL queries in a read-only transaction" do
@@ -216,7 +227,7 @@ defmodule Mix.Tasks.Ecto.QueryTest do
   test "prints MySQL SQL without starting a transaction" do
     Process.put(:test_repo_to_sql, {"SELECT p0.`id` FROM `posts` AS p0", []})
 
-    run(["-r", to_string(__MODULE__.MyXQLRepo), "--sql", inspect(Post)])
+    run(["-r", to_string(__MODULE__.MyXQLRepo), "--to-sql", inspect(Post)])
 
     refute_received {:myxql_read_only_transaction, __MODULE__.MyXQLRepo, _fun, _opts}
     assert_received {:myxql_to_sql, :all, %Ecto.Query{}, []}
@@ -266,6 +277,20 @@ defmodule Mix.Tasks.Ecto.QueryTest do
                  "ecto.query expects --limit to be greater than or equal to zero",
                  fn ->
                    run(["-r", to_string(__MODULE__.PostgresRepo), "--limit", "-1", inspect(Post)])
+                 end
+  end
+
+  test "raises when explain and to_sql are given together" do
+    assert_raise Mix.Error,
+                 "ecto.query expects only one of --explain or --to-sql to be given",
+                 fn ->
+                   run([
+                     "-r",
+                     to_string(__MODULE__.PostgresRepo),
+                     "--explain",
+                     "--to-sql",
+                     inspect(Post)
+                   ])
                  end
   end
 
@@ -322,6 +347,11 @@ defmodule Mix.Tasks.Ecto.QueryTest do
     def to_sql(operation, queryable, opts \\ []) do
       send(self(), {:to_sql, operation, queryable, opts})
       Process.get(:test_repo_to_sql, {"SELECT s0.\"id\" FROM \"posts\" AS s0", []})
+    end
+
+    def explain(operation, queryable, opts \\ []) do
+      send(self(), {:explain, operation, queryable, opts})
+      Process.get(:test_repo_explain, "Seq Scan on posts p0")
     end
   end
 
