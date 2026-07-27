@@ -542,7 +542,13 @@ if Code.ensure_loaded?(Tds) do
       [
         ?\s,
         Enum.map_intersperse(joins, ?\s, fn
-          %JoinExpr{on: %QueryExpr{expr: expr}, qual: qual, ix: ix, source: source, hints: hints} ->
+          %JoinExpr{
+            on: %BooleanExpr{expr: expr},
+            qual: qual,
+            ix: ix,
+            source: source,
+            hints: hints
+          } ->
             {join, name} = get_source(query, sources, ix, source)
             qual_text = join_qual(qual, query)
             join = join || ["(", expr(source, sources, query) | ")"]

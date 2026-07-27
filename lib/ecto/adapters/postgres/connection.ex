@@ -717,9 +717,9 @@ if Code.ensure_loaded?(Postgrex) do
       join_clauses = join(%{query | joins: other_joins}, sources)
 
       wheres =
-        for %JoinExpr{on: %QueryExpr{expr: value} = expr} <- inner_joins,
+        for %JoinExpr{on: %BooleanExpr{expr: value} = expr} <- inner_joins,
             value != true,
-            do: expr |> Map.put(:__struct__, BooleanExpr) |> Map.put(:op, :and)
+            do: expr
 
       {[?\s, prefix, ?\s, froms | join_clauses], wheres}
     end
@@ -736,9 +736,9 @@ if Code.ensure_loaded?(Postgrex) do
         end)
 
       wheres =
-        for %JoinExpr{on: %QueryExpr{expr: value} = expr} <- joins,
+        for %JoinExpr{on: %BooleanExpr{expr: value} = expr} <- joins,
             value != true,
-            do: expr |> Map.put(:__struct__, BooleanExpr) |> Map.put(:op, :and)
+            do: expr
 
       {[?\s, prefix, ?\s | froms], wheres}
     end
@@ -750,7 +750,7 @@ if Code.ensure_loaded?(Postgrex) do
         ?\s
         | Enum.map_intersperse(joins, ?\s, fn
             %JoinExpr{
-              on: %QueryExpr{expr: expr},
+              on: %BooleanExpr{expr: expr},
               qual: qual,
               ix: ix,
               source: source,

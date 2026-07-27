@@ -1757,6 +1757,25 @@ defmodule Ecto.Adapters.PostgresTest do
              "SELECT s0.\"id\", s1.\"id\" FROM \"schema\" AS s0 LEFT OUTER JOIN \"schema2\" AS s1 ON TRUE"
   end
 
+  test "update all with interpolated join query" do
+    inner = from(s in Schema2, where: s.z > 10)
+
+    query =
+      from(m in Schema, join: x in ^inner, on: m.x == x.z, update: [set: [x: 0]])
+      |> plan(:update_all)
+
+    assert update_all(query) ==
+             ~s{UPDATE "schema" AS s0 SET "x" = 0 FROM "schema2" AS s1 WHERE ((s1."z" > 10) AND (s0."x" = s1."z"))}
+  end
+
+  test "delete all with interpolated join query" do
+    inner = from(s in Schema2, where: s.z > 10)
+    query = from(m in Schema, join: x in ^inner, on: m.x == x.z) |> plan(:delete_all)
+
+    assert delete_all(query) ==
+             ~s{DELETE FROM "schema" AS s0 USING "schema2" AS s1 WHERE ((s1."z" > 10) AND (s0."x" = s1."z"))}
+  end
+
   test "lateral join with fragment" do
     query =
       Schema
