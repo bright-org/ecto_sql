@@ -396,6 +396,8 @@ defmodule Ecto.MigratorTest do
     assert_raise Ecto.MigrationError, fn ->
       up(TestRepo, 0, Migration, log: false, strict_version_order: true)
     end
+
+    refute {0, nil} in MigrationsAgent.get()
   end
 
   test "up invokes the repository adapter with up commands" do
@@ -418,12 +420,16 @@ defmodule Ecto.MigratorTest do
     assert_raise Ecto.MigrationError, fn ->
       Ecto.Migrator.up(TestRepo, 10, InvalidMigration, log: false)
     end
+
+    refute {10, nil} in MigrationsAgent.get()
   end
 
   test "down raises error when missing down/0 and change/0" do
     assert_raise Ecto.MigrationError, fn ->
       Ecto.Migrator.down(TestRepo, 1, InvalidMigration, log: false)
     end
+
+    assert {1, nil} in MigrationsAgent.get()
   end
 
   # TODO: Remove when we require Elixir 1.14

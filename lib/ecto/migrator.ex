@@ -247,8 +247,6 @@ defmodule Ecto.Migrator do
       if version in versions do
         :already_up
       else
-        result = do_up(repo, config, version, module, opts)
-
         if version != Enum.max([version | versions]) do
           latest = Enum.max(versions)
 
@@ -271,7 +269,7 @@ defmodule Ecto.Migrator do
           end
         end
 
-        result
+        do_up(repo, config, version, module, opts)
       end
     end)
   end
@@ -333,9 +331,14 @@ defmodule Ecto.Migrator do
     dynamic_repo = repo.get_dynamic_repo()
 
     fun_with_status = fn ->
-      result = fun.()
-      apply(SchemaMigration, direction, [repo, config, version, opts])
-      result
+      case fun.() do
+        :ok ->
+          apply(SchemaMigration, direction, [repo, config, version, opts])
+          :ok
+
+        result ->
+          result
+      end
     end
 
     fn -> run_maybe_in_transaction(repo, dynamic_repo, module, fun_with_status, opts) end
