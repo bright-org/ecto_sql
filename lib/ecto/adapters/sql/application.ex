@@ -4,8 +4,9 @@ defmodule Ecto.Adapters.SQL.Application do
 
   def start(_type, _args) do
     children = [
-      {DynamicSupervisor, strategy: :one_for_one, name: Ecto.MigratorSupervisor},
-      {Task.Supervisor, name: Ecto.Adapters.SQL.StorageSupervisor}
+      {Ecto.Adapters.SQL.DynamicSupervisor,
+       strategy: :one_for_one, name: Ecto.MigratorSupervisor},
+      {Ecto.Adapters.SQL.TaskSupervisor, name: Ecto.Adapters.SQL.StorageSupervisor}
     ]
 
     opts = [strategy: :one_for_one, name: Ecto.Adapters.SQL.Supervisor]
