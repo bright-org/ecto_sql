@@ -871,7 +871,7 @@ defmodule Ecto.Adapters.SQL do
 
   @doc false
   def init(connection, driver, config) do
-    unless Code.ensure_loaded?(connection) do
+    if Code.ensure_compiled(connection) != {:module, connection} do
       raise """
       could not find #{inspect(connection)}.
 
@@ -940,7 +940,8 @@ defmodule Ecto.Adapters.SQL do
     {pool, config} = Keyword.pop(config, :pool, DBConnection.ConnectionPool)
 
     pool =
-      if Code.ensure_loaded?(pool) && function_exported?(pool, :unboxed_run, 2) do
+      if Code.ensure_compiled(pool) == {:module, pool} &&
+           function_exported?(pool, :unboxed_run, 2) do
         DBConnection.Ownership
       else
         pool
