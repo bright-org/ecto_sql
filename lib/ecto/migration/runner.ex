@@ -18,7 +18,8 @@ defmodule Ecto.Migration.Runner do
     log = %{level: level, sql: sql}
     args = {self(), repo, config, module, direction, migrator_direction, log}
 
-    {:ok, runner} = DynamicSupervisor.start_child(Ecto.MigratorSupervisor, {__MODULE__, args})
+    {:ok, runner} =
+      Ecto.Adapters.SQL.DynamicSupervisor.start_child(Ecto.MigratorSupervisor, {__MODULE__, args})
     metadata(runner, opts)
 
     direction_msg = if operation == :change, do: " #{direction}", else: nil
