@@ -492,7 +492,7 @@ defmodule Ecto.Adapters.Postgres do
       |> Keyword.put(:max_restarts, 0)
 
     task =
-      Task.Supervisor.async_nolink(Ecto.Adapters.SQL.StorageSupervisor, fn ->
+      Ecto.Adapters.SQL.TaskSupervisor.async_nolink(Ecto.Adapters.SQL.StorageSupervisor, fn ->
         {:ok, conn} = Postgrex.start_link(opts)
 
         value = Postgrex.query(conn, sql, [], opts)
@@ -502,7 +502,8 @@ defmodule Ecto.Adapters.Postgres do
 
     timeout = Keyword.get(opts, :timeout, 15_000)
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
+    case Ecto.Adapters.SQL.TaskSupervisor.yield(task, timeout) ||
+           Ecto.Adapters.SQL.TaskSupervisor.shutdown(task) do
       {:ok, {:ok, result}} ->
         {:ok, result}
 

@@ -216,7 +216,9 @@ defmodule Ecto.Adapters.SQL do
       def insert(adapter_meta, schema_meta, params, on_conflict, returning, opts) do
         %{source: source, prefix: prefix} = schema_meta
         {kind, conflict_params, _} = on_conflict
-        {fields, values} = :lists.unzip(params)
+        # Prefer Enum.unzip/1 over :lists.unzip/1 — AtomVM lacks the latter;
+        # unresolved MFA surfaces as UndefinedFunctionError on this insert/6.
+        {fields, values} = Enum.unzip(params)
         sql = @conn.insert(prefix, source, fields, [fields], on_conflict, returning, [])
 
         Ecto.Adapters.SQL.struct(
@@ -236,8 +238,10 @@ defmodule Ecto.Adapters.SQL do
       @impl true
       def update(adapter_meta, schema_meta, fields, params, returning, opts) do
         %{source: source, prefix: prefix} = schema_meta
-        {fields, field_values} = :lists.unzip(fields)
-        filter_values = Keyword.values(params)
+        # Prefer Enum.unzip/1 over :lists.unzip/1 — AtomVM lacks the latter.
+        {fields, field_values} = Enum.unzip(fields)
+        # Prefer Enum.map/2 over Keyword.values/1 — AtomVM Keyword lacks values/1.
+        filter_values = Enum.map(params, fn {_k, v} -> v end)
         sql = @conn.update(prefix, source, fields, params, returning)
 
         Ecto.Adapters.SQL.struct(
@@ -257,7 +261,8 @@ defmodule Ecto.Adapters.SQL do
       @impl true
       def delete(adapter_meta, schema_meta, params, returning, opts) do
         %{source: source, prefix: prefix} = schema_meta
-        filter_values = Keyword.values(params)
+        # Prefer Enum.map/2 over Keyword.values/1 — AtomVM Keyword lacks values/1.
+        filter_values = Enum.map(params, fn {_k, v} -> v end)
         sql = @conn.delete(prefix, source, params, returning)
 
         Ecto.Adapters.SQL.struct(
@@ -871,7 +876,7 @@ defmodule Ecto.Adapters.SQL do
 
   @doc false
   def init(connection, driver, config) do
-    unless Code.ensure_loaded?(connection) do
+    if Code.ensure_compiled(connection) != {:module, connection} do
       raise """
       could not find #{inspect(connection)}.
 
@@ -940,7 +945,8 @@ defmodule Ecto.Adapters.SQL do
     {pool, config} = Keyword.pop(config, :pool, DBConnection.ConnectionPool)
 
     pool =
-      if Code.ensure_loaded?(pool) && function_exported?(pool, :unboxed_run, 2) do
+      if Code.ensure_compiled(pool) == {:module, pool} &&
+           function_exported?(pool, :unboxed_run, 2) do
         DBConnection.Ownership
       else
         pool
