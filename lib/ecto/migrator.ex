@@ -614,35 +614,47 @@ defmodule Ecto.Migrator do
   end
 
   defp pending_to(versions, migration_source, direction, target) when is_integer(target) do
-    within_target_version? = fn
-      {version, _, _}, target, :up ->
-        version <= target
-
-      {version, _, _}, target, :down ->
-        version >= target
-    end
-
-    pending_in_direction(versions, migration_source, direction)
-    |> Enum.take_while(&within_target_version?.(&1, target, direction))
+    # AtomVM Enum lacks take_while/2 (upstream uses Enum.take_while/2).
+    versions
+    |> pending_in_direction(migration_source, direction)
+    |> take_while_pending_version(target, direction, :inclusive)
   end
 
   defp pending_to_exclusive(versions, migration_source, direction, target)
        when is_integer(target) do
-    within_target_version? = fn
-      {version, _, _}, target, :up ->
-        version < target
+    versions
+    |> pending_in_direction(migration_source, direction)
+    |> take_while_pending_version(target, direction, :exclusive)
+  end
 
-      {version, _, _}, target, :down ->
-        version > target
+  defp take_while_pending_version(pending, target, direction, mode) do
+    take_while_pending_version(pending, target, direction, mode, [])
+  end
+
+  defp take_while_pending_version([], _target, _direction, _mode, acc) do
+    :lists.reverse(acc)
+  end
+
+  defp take_while_pending_version([{version, _, _} = entry | rest], target, direction, mode, acc) do
+    keep? =
+      case {direction, mode} do
+        {:up, :inclusive} -> version <= target
+        {:up, :exclusive} -> version < target
+        {:down, :inclusive} -> version >= target
+        {:down, :exclusive} -> version > target
+      end
+
+    if keep? do
+      take_while_pending_version(rest, target, direction, mode, [entry | acc])
+    else
+      :lists.reverse(acc)
     end
-
-    pending_in_direction(versions, migration_source, direction)
-    |> Enum.take_while(&within_target_version?.(&1, target, direction))
   end
 
   defp pending_step(versions, migration_source, direction, count) do
+    # AtomVM Enum lacks take/2 (upstream uses Enum.take/2).
     pending_in_direction(versions, migration_source, direction)
-    |> Enum.take(count)
+    |> :lists.sublist(count)
   end
 
   defp pending_all(versions, migration_source, direction) do
@@ -815,14 +827,16 @@ defmodule Ecto.Migrator do
   defp log(true, msg), do: log(:info, msg)
 
   defp log(level, msg) when is_atom(level) do
-    # Logger.log/2 is a macro (not function_exported). Prefer :logger for OTP CaptureLog
-    # and AtomVM hosts that ship it; otherwise print.
+    mapped = map_logger_level(level)
+    text = to_string(msg)
+
+    # OTP CaptureLog needs :logger. AtomVM's :logger has no console backend that
+    # Mix Port can see, so always print like Logger console output.
     if function_exported?(:logger, :log, 2) do
-      :logger.log(map_logger_level(level), to_string(msg))
-    else
-      IO.puts(:stderr, "[#{level}] #{msg}")
+      :logger.log(mapped, text)
     end
 
+    IO.puts("[#{mapped}] #{text}")
     :ok
   end
 

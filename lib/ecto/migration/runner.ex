@@ -388,12 +388,20 @@ defmodule Ecto.Migration.Runner do
   defp log(true, msg, metadata), do: log(:info, msg, metadata)
 
   defp log(level, msg, _metadata) when is_atom(level) do
+    emit_migrator_log(level, msg)
+  end
+
+  defp emit_migrator_log(level, msg) do
+    mapped = map_logger_level(level)
+    text = to_string(msg)
+
+    # OTP CaptureLog needs :logger. AtomVM's :logger has no console backend that
+    # Mix Port can see, so always print like Logger console output.
     if function_exported?(:logger, :log, 2) do
-      :logger.log(map_logger_level(level), to_string(msg))
-    else
-      IO.puts(:stderr, "[#{level}] #{msg}")
+      :logger.log(mapped, text)
     end
 
+    IO.puts("[#{mapped}] #{text}")
     :ok
   end
 
