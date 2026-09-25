@@ -103,8 +103,6 @@ defmodule Ecto.Migrator do
 
   """
 
-  require Logger
-
   alias Ecto.Migration.Runner
   alias Ecto.Migration.SchemaMigration
 
@@ -265,7 +263,7 @@ defmodule Ecto.Migrator do
           if opts[:strict_version_order] do
             raise Ecto.MigrationError, message
           else
-            Logger.warning(message)
+            log(:warning, message)
           end
         end
 
@@ -328,7 +326,8 @@ defmodule Ecto.Migrator do
   end
 
   defp async_migrate_maybe_in_transaction(repo, config, version, module, direction, opts, fun) do
-    dynamic_repo = repo.get_dynamic_repo()
+    previous_repo = repo.get_dynamic_repo()
+    dynamic_repo = previous_repo
 
     fun_with_status = fn ->
       case fun.() do
@@ -341,9 +340,12 @@ defmodule Ecto.Migrator do
       end
     end
 
-    fn -> run_maybe_in_transaction(repo, dynamic_repo, module, fun_with_status, opts) end
-    |> Task.async()
-    |> Task.await(:infinity)
+    # AtomVM has no Task; run in-process and restore dynamic_repo afterwards.
+    try do
+      run_maybe_in_transaction(repo, dynamic_repo, module, fun_with_status, opts)
+    after
+      repo.put_dynamic_repo(previous_repo)
+    end
   end
 
   defp run_maybe_in_transaction(repo, dynamic_repo, module, fun, opts) do
@@ -672,7 +674,8 @@ defmodule Ecto.Migrator do
       {version, module} ->
         [{version, module, module}]
     end)
-    |> Enum.sort()
+    # Prefer :lists.sort/1 — AtomVM Enum may lack Enum.sort/1.
+    |> :lists.sort()
   end
 
   defp extract_migration_info(file) do
@@ -781,7 +784,7 @@ defmodule Ecto.Migrator do
       fun.()
     rescue
       error ->
-        Logger.error("""
+        log(:error, """
         Could not #{reason}. This error usually happens due to the following:
 
           * The database does not exist
@@ -809,8 +812,22 @@ defmodule Ecto.Migrator do
   end
 
   defp log(false, _msg), do: :ok
-  defp log(true, msg), do: Logger.info(msg)
-  defp log(level, msg), do: Logger.log(level, msg)
+  defp log(true, msg), do: log(:info, msg)
+
+  defp log(level, msg) when is_atom(level) do
+    # Logger.log/2 is a macro (not function_exported). Prefer :logger for OTP CaptureLog
+    # and AtomVM hosts that ship it; otherwise print.
+    if function_exported?(:logger, :log, 2) do
+      :logger.log(map_logger_level(level), to_string(msg))
+    else
+      IO.puts(:stderr, "[#{level}] #{msg}")
+    end
+
+    :ok
+  end
+
+  defp map_logger_level(:warn), do: :warning
+  defp map_logger_level(level), do: level
 
   defp migrator_log(opts) do
     Keyword.get(opts, :log_migrator_sql, false)
