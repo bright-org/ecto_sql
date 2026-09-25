@@ -1,8 +1,6 @@
 defmodule Ecto.Migration.Runner do
   @moduledoc false
-  use Agent, restart: :temporary
-
-  require Logger
+  use GenServer, restart: :temporary
 
   alias Ecto.Migration.Table
   alias Ecto.Migration.Index
@@ -25,10 +23,17 @@ defmodule Ecto.Migration.Runner do
     direction_msg = if operation == :change, do: " #{direction}", else: nil
 
     log(level, "== Running #{version} #{inspect(module)}.#{operation}/0#{direction_msg}")
-    {time, _} = :timer.tc(fn -> perform_operation(repo, module, operation) end)
+    # AtomVM lacks :timer.tc/1. Measure with monotonic_time when available.
+    {time, _} = tc(fn -> perform_operation(repo, module, operation) end)
     log(level, "== Migrated #{version} in #{inspect(div(time, 100_000) / 10)}s")
   after
     stop()
+  end
+
+  defp tc(fun) when is_function(fun, 0) do
+    t0 = :erlang.monotonic_time(:microsecond)
+    result = fun.()
+    {max(:erlang.monotonic_time(:microsecond) - t0, 0), result}
   end
 
   @doc """
@@ -43,35 +48,53 @@ defmodule Ecto.Migration.Runner do
   Starts the runner for the specified repo.
   """
   def start_link({parent, repo, config, module, direction, migrator_direction, log}) do
-    Agent.start_link(fn ->
-      Process.link(parent)
+    GenServer.start_link(__MODULE__, {parent, repo, config, module, direction, migrator_direction, log})
+  end
 
-      %{
-        direction: direction,
-        repo: repo,
-        migration: module,
-        migrator_direction: migrator_direction,
-        command: nil,
-        subcommands: [],
-        log: log,
-        commands: [],
-        config: config
-      }
-    end)
+  @impl true
+  def init({parent, repo, config, module, direction, migrator_direction, log}) do
+    Process.link(parent)
+
+    {:ok,
+     %{
+       direction: direction,
+       repo: repo,
+       migration: module,
+       migrator_direction: migrator_direction,
+       command: nil,
+       subcommands: [],
+       log: log,
+       commands: [],
+       config: config
+     }}
+  end
+
+  @impl true
+  def handle_call({:get, fun}, _from, state) when is_function(fun, 1) do
+    {:reply, fun.(state), state}
+  end
+
+  def handle_call({:update, fun}, _from, state) when is_function(fun, 1) do
+    {:reply, :ok, fun.(state)}
+  end
+
+  def handle_call({:get_and_update, fun}, _from, state) when is_function(fun, 1) do
+    {reply, new_state} = fun.(state)
+    {:reply, reply, new_state}
   end
 
   @doc """
   Stops the runner.
   """
   def stop() do
-    Agent.stop(runner())
+    GenServer.stop(runner())
   end
 
   @doc """
   Accesses the given repository configuration.
   """
   def repo_config(key, default) do
-    Agent.get(runner(), &Keyword.get(&1.config, key, default))
+    GenServer.call(runner(), {:get, &Keyword.get(&1.config, key, default)})
   end
 
   @doc """
@@ -84,14 +107,14 @@ defmodule Ecto.Migration.Runner do
 
   """
   def migrator_direction do
-    Agent.get(runner(), & &1.migrator_direction)
+    GenServer.call(runner(), {:get, & &1.migrator_direction})
   end
 
   @doc """
   Gets the repo for this migration
   """
   def repo do
-    Agent.get(runner(), & &1.repo)
+    GenServer.call(runner(), {:get, & &1.repo})
   end
 
   @doc """
@@ -112,7 +135,7 @@ defmodule Ecto.Migration.Runner do
   """
   def flush do
     %{commands: commands, direction: direction, repo: repo, log: log, migration: migration} =
-      Agent.get_and_update(runner(), fn state -> {state, %{state | commands: []}} end)
+      GenServer.call(runner(), {:get_and_update, fn state -> {state, %{state | commands: []}} end})
 
     commands = if direction == :backward, do: commands, else: Enum.reverse(commands)
 
@@ -129,13 +152,13 @@ defmodule Ecto.Migration.Runner do
   """
   def execute(command) do
     reply =
-      Agent.get_and_update(runner(), fn
+      GenServer.call(runner(), {:get_and_update, fn
         %{command: nil} = state ->
           {:ok, %{state | subcommands: [], commands: [command | state.commands]}}
 
         %{command: _} = state ->
           {:error, %{state | command: nil}}
-      end)
+      end})
 
     case reply do
       :ok ->
@@ -151,13 +174,13 @@ defmodule Ecto.Migration.Runner do
   """
   def start_command(command) do
     reply =
-      Agent.get_and_update(runner(), fn
+      GenServer.call(runner(), {:get_and_update, fn
         %{command: nil} = state ->
           {:ok, %{state | command: command}}
 
         %{command: _} = state ->
           {:error, %{state | command: command}}
-      end)
+      end})
 
     case reply do
       :ok ->
@@ -172,11 +195,11 @@ defmodule Ecto.Migration.Runner do
   Queues and clears current command. Must call `start_command/1` first.
   """
   def end_command do
-    Agent.update(runner(), fn state ->
+    GenServer.call(runner(), {:update, fn state ->
       {operation, object} = state.command
       command = {operation, object, Enum.reverse(state.subcommands)}
       %{state | command: nil, subcommands: [], commands: [command | state.commands]}
-    end)
+    end})
   end
 
   @doc """
@@ -184,13 +207,13 @@ defmodule Ecto.Migration.Runner do
   """
   def subcommand(subcommand) do
     reply =
-      Agent.get_and_update(runner(), fn
+      GenServer.call(runner(), {:get_and_update, fn
         %{command: nil} = state ->
           {:error, state}
 
         state ->
           {:ok, update_in(state.subcommands, &[subcommand | &1])}
-      end)
+      end})
 
     case reply do
       :ok ->
@@ -360,10 +383,22 @@ defmodule Ecto.Migration.Runner do
   defp ddl_log(_level, false, _msg, _metadata), do: :ok
   defp ddl_log(level, _, msg, metadata), do: log(level, msg, metadata)
 
-  defp log(level, msg, metadata \\ [])
+  defp log(level, msg, _metadata \\ [])
   defp log(false, _msg, _metadata), do: :ok
-  defp log(true, msg, metadata), do: Logger.log(:info, msg, metadata)
-  defp log(level, msg, metadata), do: Logger.log(level, msg, metadata)
+  defp log(true, msg, metadata), do: log(:info, msg, metadata)
+
+  defp log(level, msg, _metadata) when is_atom(level) do
+    if function_exported?(:logger, :log, 2) do
+      :logger.log(map_logger_level(level), to_string(msg))
+    else
+      IO.puts(:stderr, "[#{level}] #{msg}")
+    end
+
+    :ok
+  end
+
+  defp map_logger_level(:warn), do: :warning
+  defp map_logger_level(level), do: level
 
   defp maybe_warn_index_ddl_transaction(%{concurrently: true} = index, migration) do
     migration_config = migration.__migration__()
